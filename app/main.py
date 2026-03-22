@@ -59,8 +59,8 @@ async def lifespan(_: FastAPI):
                 await conn.execute(
                     text(
                         "INSERT INTO subscription_plans"
-                        " (id, name, price, currency, period_days, tier, description, is_active, sort_order)"
-                        " VALUES (:id, :name, :price, :currency, :period_days, :tier, :description, :is_active, :sort_order)"
+                        " (id, name, price, currency, period_days, tier, description, is_active, sort_order, created_at)"
+                        " VALUES (:id, :name, :price, :currency, :period_days, :tier, :description, :is_active, :sort_order, CURRENT_TIMESTAMP)"
                     ),
                     plan,
                 )
