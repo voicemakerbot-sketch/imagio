@@ -46,10 +46,16 @@ class Settings(BaseSettings):
 
     @field_validator("admin_ids", mode="before")
     @classmethod
-    def split_admin_ids(cls, value: str | List[int]) -> List[int]:
+    def split_admin_ids(cls, value) -> List[int]:
         if not value:
             return []
+        if isinstance(value, int):
+            return [value]
+        if isinstance(value, list):
+            return [int(x) for x in value]
         if isinstance(value, str):
+            # Strip brackets: "[123,456]" -> "123,456"
+            value = value.strip().strip("[]")
             ids: List[int] = []
             for item in value.split(","):
                 item = item.strip()
@@ -60,7 +66,7 @@ class Settings(BaseSettings):
                 except ValueError:
                     continue
             return ids
-        return value
+        return []
 
     @property
     def voice_api_keys(self) -> List[str]:
