@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,6 +11,8 @@ from app.admin import admin_router
 from app.api.routes import api_router
 from app.core.config import settings
 from app.db.session import Base, engine
+
+logger = logging.getLogger(__name__)
 
 # Default subscription plans to seed on startup
 _DEFAULT_PLANS = [
@@ -38,31 +41,38 @@ _DEFAULT_PLANS = [
 ]
 
 
-async def _seed_plans(conn) -> None:
-    """Insert default plans if they don't exist yet."""
-    for plan in _DEFAULT_PLANS:
-        existing = await conn.execute(
-            text("SELECT id FROM subscription_plans WHERE id = :id"),
-            {"id": plan["id"]},
-        )
-        if not existing.fetchone():
-            await conn.execute(
-                text("""
-                    INSERT INTO subscription_plans
-                        (id, name, price, currency, period_days, tier, description, is_active, sort_order)
-                    VALUES
-                        (:id, :name, :price, :currency, :period_days, :tier, :description, :is_active, :sort_order)
-                """),
-                plan,
-            )
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Ensure database tables exist before serving requests.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await _seed_plans(conn)
+        logger.info("Database tables ensured")
+
+    # Seed plans in a separate transaction
+    async with engine.begin() as conn:
+        for plan in _DEFAULT_PLANS:
+            existing = await conn.execute(
+                text("SELECT id FROM subscription_plans WHERE id = :id"),
+                {"id": plan["id"]},
+            )
+            if not existing.fetchone():
+                await conn.execute(
+                    text(
+                        "INSERT INTO subscription_plans"
+                        " (id, name, price, currency, period_days, tier, description, is_active, sort_order)"
+                        " VALUES (:id, :name, :price, :currency, :period_days, :tier, :description, :is_active, :sort_order)"
+                    ),
+                    plan,
+                )
+                logger.info("Seeded plan: %s ($%.0f/%s)", plan["name"], plan["price"], plan["tier"])
+            else:
+                logger.info("Plan %s already exists", plan["id"])
+
+        # Verify
+        result = await conn.execute(text("SELECT id, name, is_active FROM subscription_plans"))
+        rows = result.fetchall()
+        logger.info("Subscription plans in DB: %d — %s", len(rows), [r[0] for r in rows])
+
     yield
 
 
