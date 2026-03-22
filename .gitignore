@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Sessions
+*.session
+*.session-journal
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp
+tmp/
+temp/
+*.tmp
+
+# Voisio (legacy reference, not part of Imagio)
+Voisio/
+
+# AI
+.gemini/
+.github/copilot-instructions.md.bak
