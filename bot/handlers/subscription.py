@@ -80,22 +80,26 @@ async def show_subscription(callback: CallbackQuery) -> None:
                 text, reply_markup=build_active_subscription_keyboard(lang),
             )
         elif tier == "frozen":
-            # Frozen — show message + plans
+            # Frozen — show message + plans with descriptions
             plans = await _get_active_plans(session)
+            plans_text = _build_plans_description(plans, lang)
             text = (
                 f"❄️ <b>{get_message('subscription.frozen_msg', lang)}</b>\n\n"
+                f"{plans_text}\n\n"
                 f"{get_message('subscription.choose_plan', lang)}"
             )
             await callback.message.edit_text(
                 text, reply_markup=build_plans_keyboard(plans, tier, lang),
             )
         else:
-            # Free tier — show plans
+            # Free tier — show plans with descriptions
             plans = await _get_active_plans(session)
+            plans_text = _build_plans_description(plans, lang)
             text = (
                 f"💎 <b>{get_message('subscription.cabinet', lang)}</b>\n\n"
                 f"📌 {get_message('subscription.current_plan', lang)}: <b>{tier_label}</b>\n"
                 f"📊 {get_message('subscription.daily_limit_info', lang)}\n\n"
+                f"{plans_text}\n\n"
                 f"{get_message('subscription.choose_plan', lang)}"
             )
             await callback.message.edit_text(
@@ -231,6 +235,23 @@ async def cancel_sub_execute(callback: CallbackQuery) -> None:
 
 
 # ─── Helpers ──────────────────────────────────────────────
+
+def _build_plans_description(plans: list[SubscriptionPlan], lang: str) -> str:
+    """Build formatted text block with plan names, prices, and feature descriptions."""
+    tier_emoji = {"premium": "⭐", "pro": "🚀"}
+    desc_keys = {
+        "premium": "subscription.plan_premium_desc",
+        "pro": "subscription.plan_pro_desc",
+    }
+    parts = []
+    for plan in plans:
+        emoji = tier_emoji.get(plan.tier, "💎")
+        desc = get_message(desc_keys.get(plan.tier, ""), lang) if plan.tier in desc_keys else (plan.description or "")
+        parts.append(
+            f"{emoji} <b>{plan.name}</b> — ${plan.price:.0f}/{get_message('subscription.per_month', lang)}\n{desc}"
+        )
+    return "\n\n".join(parts)
+
 
 async def _get_active_plans(session) -> list[SubscriptionPlan]:
     result = await session.execute(
