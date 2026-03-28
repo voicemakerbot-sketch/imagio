@@ -35,7 +35,7 @@ from app.services.voiceapi import (
     VoiceAPIError,
     VoiceAPIRateLimitError,
     VoiceAPITaskFailed,
-    generate_image_v2,
+    generate_image,
 )
 from bot.keyboards.main_menu import (
     build_main_menu,
@@ -430,28 +430,13 @@ async def handle_queue_run(callback: CallbackQuery, state: FSMContext) -> None:
                 get_message("queue.progress", lang).format(current=idx, total=total)
             )
 
-            from bot.handlers.menu import make_progress_callback
-            on_progress = make_progress_callback(status_msg, lang)
-
-            result = await generate_image_v2(
+            generated_b64 = await generate_image(
                 prompt=full_prompt,
                 aspect_ratio=ratio,
                 generation_mode=settings.voice_api_generation_mode,
                 num_images=num_variants,
-                on_progress=on_progress,
                 user_id=user_id,
             )
-
-            # Extract images
-            generated_b64: List[str] = []
-            images_list = result.get("images", [])
-            if images_list:
-                for img_info in images_list:
-                    b64 = img_info.get("image_base64", "")
-                    if b64:
-                        generated_b64.append(b64)
-            if not generated_b64 and result.get("image_base64"):
-                generated_b64.append(result["image_base64"])
 
             if not generated_b64:
                 raise VoiceAPIError("No images in response")

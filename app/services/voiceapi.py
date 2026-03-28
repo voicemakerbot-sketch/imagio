@@ -1,11 +1,17 @@
-"""VoiceAPI v2 client with async task polling and multi-key pool."""
+"""VoiceAPI v1 client — synchronous image generation with multi-key pool.
+
+v1 is a blocking API: one POST request, wait for result.
+Endpoints:
+    POST /v1/image/create  → {image_b64} or PNG file
+    POST /v1/image/edit    → {image_b64} or PNG file
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -27,41 +33,45 @@ class VoiceAPIRateLimitError(VoiceAPIError):
 
 
 class VoiceAPITaskFailed(VoiceAPIError):
-    """Raised when a generation task ends with status=failed."""
+    """Raised when generation fails (content violation, timeout, etc.)."""
 
 
-# Progress callback type alias
-ProgressCallback = Optional[Callable[..., Coroutine[Any, Any, None]]]
+# Map HTTP status codes to error descriptions
+_HTTP_ERROR_MAP: Dict[int, str] = {
+    400: "Bad request",
+    401: "Unauthorized",
+    403: "Forbidden or content violation",
+    422: "Validation error",
+    429: "Rate limit exceeded",
+    500: "Internal server error",
+    502: "External service error",
+    503: "Service temporarily unavailable",
+    504: "Generation timeout",
+}
 
 
 # ---------------------------------------------------------------------------
-# Single-key async client (v2)
+# Single-key async client (v1 — synchronous / blocking API)
 # ---------------------------------------------------------------------------
 
 
 class VoiceAPIClient:
-    """Async client for VoiceAPI **v2** (task-based generation).
+    """Async HTTP client for VoiceAPI **v1** (synchronous generation).
 
-    Workflow:
-        POST /v2/image/generate  → task_id
-        GET  /v2/image/tasks/{id}/status  → poll until completed/failed
-        GET  /v2/image/tasks/{id}/result  → image data
+    v1 blocks until the image is ready — no task polling needed.
+    Timeout must be generous (up to 180s for complex prompts).
     """
-
-    TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-    POLL_INTERVAL = 2.0  # seconds between status checks
-    POLL_TIMEOUT = 180.0  # max wait for a single task
 
     def __init__(
         self,
         base_url: str,
         api_key: str,
         proxy_url: Optional[str] = None,
-        timeout: float = 60.0,
+        timeout: float = 180.0,
     ) -> None:
         client_args: Dict[str, Any] = {
             "base_url": base_url.rstrip("/"),
-            "timeout": httpx.Timeout(timeout),
+            "timeout": httpx.Timeout(timeout, connect=30.0),
             "headers": {"X-API-Key": api_key},
         }
         if proxy_url:
@@ -69,124 +79,89 @@ class VoiceAPIClient:
         self._client = httpx.AsyncClient(**client_args)
         self._api_key = api_key
 
-    # -- v2 create task -------------------------------------------------------
+    # -- v1 create ------------------------------------------------------------
 
-    async def submit_generate(
+    async def create_image(
         self,
         prompt: str,
         *,
         aspect_ratio: str = "1:1",
         generation_mode: str = "quality",
-        num_images: int = 1,
         prompt_upsampling: bool = True,
     ) -> Dict[str, Any]:
-        """POST /v2/image/generate – submit a generation task."""
+        """POST /v1/image/create — blocks until image is ready.
+
+        Returns JSON with ``image_b64`` key.
+        """
         payload: Dict[str, Any] = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
             "generation_mode": generation_mode,
-            "num_images": num_images,
             "prompt_upsampling": prompt_upsampling,
         }
-        resp = await self._client.post("/v2/image/generate", json=payload)
-        if resp.status_code == 429:
-            raise VoiceAPIRateLimitError("Rate limit exceeded (429)")
-        resp.raise_for_status()
+        resp = await self._client.post("/v1/image/create", json=payload)
+        self._raise_for_status(resp)
         return resp.json()
 
-    # -- v2 edit task ---------------------------------------------------------
+    # -- v1 edit --------------------------------------------------------------
 
-    async def submit_edit(
+    async def edit_image(
         self,
-        prompt: str,
-        image_bytes: bytes,
+        reference_image_b64: str,
+        edit_instruction: str,
         *,
         aspect_ratio: str = "1:1",
         generation_mode: str = "quality",
-        num_images: int = 1,
         prompt_upsampling: bool = True,
     ) -> Dict[str, Any]:
-        """POST /v2/image/edit – submit an edit task (multipart)."""
-        files = {"image": ("source.png", image_bytes, "image/png")}
-        data: Dict[str, Any] = {
-            "prompt": prompt,
+        """POST /v1/image/edit — blocks until edited image is ready.
+
+        Accepts base64-encoded reference image and text instruction.
+        Returns JSON with ``image_b64`` key.
+        """
+        payload: Dict[str, Any] = {
+            "reference_image_b64": reference_image_b64,
+            "edit_instruction": edit_instruction,
             "aspect_ratio": aspect_ratio,
             "generation_mode": generation_mode,
-            "num_images": str(num_images),
-            "prompt_upsampling": str(prompt_upsampling).lower(),
+            "prompt_upsampling": prompt_upsampling,
         }
-        resp = await self._client.post("/v2/image/edit", data=data, files=files)
-        if resp.status_code == 429:
-            raise VoiceAPIRateLimitError("Rate limit exceeded (429)")
-        resp.raise_for_status()
+        resp = await self._client.post("/v1/image/edit", json=payload)
+        self._raise_for_status(resp)
         return resp.json()
 
-    # -- poll status ----------------------------------------------------------
+    # -- error handling -------------------------------------------------------
 
-    async def poll_task(
-        self,
-        task_id: int,
-        *,
-        on_progress: ProgressCallback = None,
-    ) -> Dict[str, Any]:
-        """Poll GET /v2/image/tasks/{id}/status until terminal status."""
-        start = time.monotonic()
-        prev_status: str = ""
-        prev_progress: float = -1
-        while True:
-            elapsed = time.monotonic() - start
-            if elapsed > self.POLL_TIMEOUT:
-                raise VoiceAPIError(f"Task {task_id} timed out after {self.POLL_TIMEOUT}s")
+    @staticmethod
+    def _raise_for_status(resp: httpx.Response) -> None:
+        """Raise typed exceptions based on HTTP status code."""
+        if resp.is_success:
+            return
 
-            resp = await self._client.get(f"/v2/image/tasks/{task_id}/status")
-            resp.raise_for_status()
-            status_data = resp.json()
+        status = resp.status_code
 
-            current_status = status_data.get("status", "unknown")
-            progress = status_data.get("progress", 0)
+        # Try to extract error details from JSON body
+        detail = ""
+        error_code = ""
+        try:
+            body = resp.json()
+            detail = body.get("detail", "")
+            error_code = body.get("error_code", "")
+        except Exception:
+            detail = resp.text[:200] if resp.text else ""
 
-            # Log only when status or progress actually changes
-            if current_status != prev_status or progress != prev_progress:
-                logger.debug(
-                    "Task %s: status=%s progress=%.1f elapsed=%.0fs",
-                    task_id, current_status, progress, elapsed,
-                )
-                prev_status = current_status
-                prev_progress = progress
+        desc = _HTTP_ERROR_MAP.get(status, f"HTTP {status}")
+        msg = f"{desc}: {detail}" if detail else desc
+        if error_code:
+            msg = f"[{error_code}] {msg}"
 
-            if on_progress:
-                await on_progress(current_status, progress, status_data)
+        if status == 429:
+            raise VoiceAPIRateLimitError(msg)
+        if status in (403, 422, 500, 502, 503, 504):
+            raise VoiceAPITaskFailed(msg)
 
-            if current_status in self.TERMINAL_STATUSES:
-                if current_status == "failed":
-                    error_msg = status_data.get("error_message", "Unknown error")
-                    raise VoiceAPITaskFailed(f"Task {task_id} failed: {error_msg}")
-                if current_status == "cancelled":
-                    raise VoiceAPIError(f"Task {task_id} was cancelled")
-                return status_data
-
-            await asyncio.sleep(self.POLL_INTERVAL)
-
-    # -- fetch result ---------------------------------------------------------
-
-    async def get_result(
-        self,
-        task_id: int,
-        *,
-        image_base64: bool = True,
-        fmt: str = "png",
-    ) -> Dict[str, Any]:
-        """GET /v2/image/tasks/{id}/result – fetch completed result."""
-        params: Dict[str, Any] = {
-            "image_base64": str(image_base64).lower(),
-            "format": fmt,
-        }
-        resp = await self._client.get(f"/v2/image/tasks/{task_id}/result", params=params)
-        resp.raise_for_status()
-        result = resp.json()
-        # Log keys only – image data is too large
-        logger.debug("Result for task %s – keys: %s", task_id, list(result.keys()))
-        return result
+        # Generic fallback
+        raise VoiceAPIError(msg)
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -201,20 +176,28 @@ class VoiceAPIClient:
 
 
 # ---------------------------------------------------------------------------
-# Multi-key pool with round-robin & 429 fallback
+# Multi-key pool with round-robin, 429 fallback & global concurrency
 # ---------------------------------------------------------------------------
 
-
-# Concurrency limits
+# Per-key concurrency: how many simultaneous requests one API key handles
 MAX_CONCURRENT_PER_KEY = 3
+# Per-user concurrency: max parallel generations per Telegram user
 MAX_CONCURRENT_PER_USER = 2
+# Global concurrency: total simultaneous requests across all keys / users.
+# This protects the external API from overload when 50+ users are active.
+# With 10 keys × 3 per key = 30 max, we cap at 20 for safety margin.
+MAX_GLOBAL_CONCURRENT = 20
 
 
 class VoiceAPIPool:
     """Manages multiple VoiceAPIClient instances with round-robin key rotation.
 
+    Concurrency is controlled at three levels:
+    1. **Global semaphore** — caps total parallel requests to the external API
+    2. **Per-key semaphore** — prevents a single key from being overloaded
+    3. **Per-user semaphore** — limits individual user's parallel requests
+
     On 429 the pool marks the key as temporarily exhausted and tries the next.
-    Semaphores enforce per-key (3) and per-user (2) concurrency limits.
     """
 
     def __init__(
@@ -230,10 +213,18 @@ class VoiceAPIPool:
         self._keys = list(api_keys)
         self._index = 0
         self._clients: Dict[str, VoiceAPIClient] = {}
+
+        # Semaphores
+        self._global_semaphore = asyncio.Semaphore(MAX_GLOBAL_CONCURRENT)
         self._key_semaphores: Dict[str, asyncio.Semaphore] = {
             key: asyncio.Semaphore(MAX_CONCURRENT_PER_KEY) for key in self._keys
         }
         self._user_semaphores: Dict[int, asyncio.Semaphore] = {}
+
+        logger.info(
+            "VoiceAPIPool initialized: %d keys, global_limit=%d, per_key=%d, per_user=%d",
+            len(self._keys), MAX_GLOBAL_CONCURRENT, MAX_CONCURRENT_PER_KEY, MAX_CONCURRENT_PER_USER,
+        )
 
     def _get_user_semaphore(self, user_id: int) -> asyncio.Semaphore:
         if user_id not in self._user_semaphores:
@@ -254,49 +245,42 @@ class VoiceAPIPool:
         self._index += 1
         return key
 
-    async def submit_generate(
+    async def create_image(
         self, *, user_id: int = 0, **kwargs: Any,
-    ) -> tuple[VoiceAPIClient, Dict[str, Any]]:
-        """Try to submit across all keys with concurrency control."""
+    ) -> Dict[str, Any]:
+        """Try /v1/image/create across keys with 3-level concurrency control."""
         user_sem = self._get_user_semaphore(user_id)
         async with user_sem:
-            last_exc: Optional[Exception] = None
-            for _ in range(len(self._keys)):
-                key = self._next_key()
-                key_sem = self._key_semaphores[key]
-                async with key_sem:
-                    client = self._get_client(key)
-                    try:
-                        result = await client.submit_generate(**kwargs)
-                        logger.debug("submit_generate succeeded with key …%s", key[-8:])
-                        return client, result
-                    except VoiceAPIRateLimitError as exc:
-                        logger.warning("Key …%s hit 429, rotating", key[-8:])
-                        last_exc = exc
-                        continue
-            raise last_exc or VoiceAPIRateLimitError("All API keys exhausted (429)")
+            async with self._global_semaphore:
+                return await self._try_across_keys("create_image", **kwargs)
 
-    async def submit_edit(
+    async def edit_image(
         self, *, user_id: int = 0, **kwargs: Any,
-    ) -> tuple[VoiceAPIClient, Dict[str, Any]]:
-        """Try to submit edit across all keys with concurrency control."""
+    ) -> Dict[str, Any]:
+        """Try /v1/image/edit across keys with 3-level concurrency control."""
         user_sem = self._get_user_semaphore(user_id)
         async with user_sem:
-            last_exc: Optional[Exception] = None
-            for _ in range(len(self._keys)):
-                key = self._next_key()
-                key_sem = self._key_semaphores[key]
-                async with key_sem:
-                    client = self._get_client(key)
-                    try:
-                        result = await client.submit_edit(**kwargs)
-                        logger.debug("submit_edit succeeded with key …%s", key[-8:])
-                        return client, result
-                    except VoiceAPIRateLimitError as exc:
-                        logger.warning("Key …%s hit 429, rotating", key[-8:])
-                        last_exc = exc
-                        continue
-            raise last_exc or VoiceAPIRateLimitError("All API keys exhausted (429)")
+            async with self._global_semaphore:
+                return await self._try_across_keys("edit_image", **kwargs)
+
+    async def _try_across_keys(self, method_name: str, **kwargs: Any) -> Dict[str, Any]:
+        """Rotate through API keys, skip 429'd ones."""
+        last_exc: Optional[Exception] = None
+        for _ in range(len(self._keys)):
+            key = self._next_key()
+            key_sem = self._key_semaphores[key]
+            async with key_sem:
+                client = self._get_client(key)
+                try:
+                    method = getattr(client, method_name)
+                    result = await method(**kwargs)
+                    logger.debug("%s succeeded with key …%s", method_name, key[-8:])
+                    return result
+                except VoiceAPIRateLimitError as exc:
+                    logger.warning("Key …%s hit 429, rotating", key[-8:])
+                    last_exc = exc
+                    continue
+        raise last_exc or VoiceAPIRateLimitError("All API keys exhausted (429)")
 
     async def close(self) -> None:
         for client in self._clients.values():
@@ -328,59 +312,127 @@ def get_pool() -> VoiceAPIPool:
 # ---------------------------------------------------------------------------
 
 
-async def generate_image_v2(
+async def generate_image(
     *,
     prompt: str,
     aspect_ratio: str = "1:1",
     generation_mode: str = "quality",
     num_images: int = 1,
-    on_progress: ProgressCallback = None,
     user_id: int = 0,
-) -> Dict[str, Any]:
-    """Full flow: submit → poll → result.  Returns the /result JSON."""
+) -> List[str]:
+    """Generate image(s) via v1 synchronous API.
+
+    For ``num_images > 1``, fires N parallel requests through the pool.
+    Returns a list of base64-encoded image strings.
+    """
     pool = get_pool()
-    client, submit_resp = await pool.submit_generate(
-        user_id=user_id,
-        prompt=prompt,
-        aspect_ratio=aspect_ratio,
-        generation_mode=generation_mode,
-        num_images=num_images,
+
+    async def _single_create() -> str:
+        result = await pool.create_image(
+            user_id=user_id,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            generation_mode=generation_mode,
+        )
+        b64 = result.get("image_b64", "")
+        if not b64:
+            raise VoiceAPIError("Empty image result from API")
+        return b64
+
+    start = time.monotonic()
+    logger.info(
+        "generate_image: prompt=%r ratio=%s mode=%s num=%d user=%d",
+        prompt[:80], aspect_ratio, generation_mode, num_images, user_id,
     )
-    task_id = submit_resp["task_id"]
-    logger.info("Task %s submitted (mode=%s, images=%d)", task_id, generation_mode, num_images)
 
-    await client.poll_task(task_id, on_progress=on_progress)
+    if num_images == 1:
+        images = [await _single_create()]
+    else:
+        # Fire parallel requests for multiple variants
+        tasks = [asyncio.create_task(_single_create()) for _ in range(num_images)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    result = await client.get_result(task_id, image_base64=True, fmt="png")
-    logger.info("Task %s completed", task_id)
-    return result
+        images: List[str] = []
+        errors: List[Exception] = []
+        for r in results:
+            if isinstance(r, Exception):
+                errors.append(r)
+            else:
+                images.append(r)
+
+        if not images:
+            # All failed — re-raise the first error
+            raise errors[0] if errors else VoiceAPIError("No images generated")
+
+        if errors:
+            logger.warning(
+                "generate_image: %d/%d variants failed: %s",
+                len(errors), num_images, errors[0],
+            )
+
+    elapsed = time.monotonic() - start
+    logger.info("generate_image: %d images in %.1fs", len(images), elapsed)
+    return images
 
 
-async def edit_image_v2(
+async def edit_image(
     *,
-    prompt: str,
-    image_bytes: bytes,
+    edit_instruction: str,
+    reference_image_b64: str,
     aspect_ratio: str = "1:1",
     generation_mode: str = "quality",
     num_images: int = 1,
-    on_progress: ProgressCallback = None,
     user_id: int = 0,
-) -> Dict[str, Any]:
-    """Full edit flow: submit → poll → result."""
+) -> List[str]:
+    """Edit image(s) via v1 synchronous API.
+
+    For ``num_images > 1``, fires N parallel requests through the pool.
+    Returns a list of base64-encoded image strings.
+    """
     pool = get_pool()
-    client, submit_resp = await pool.submit_edit(
-        user_id=user_id,
-        prompt=prompt,
-        image_bytes=image_bytes,
-        aspect_ratio=aspect_ratio,
-        generation_mode=generation_mode,
-        num_images=num_images,
+
+    async def _single_edit() -> str:
+        result = await pool.edit_image(
+            user_id=user_id,
+            reference_image_b64=reference_image_b64,
+            edit_instruction=edit_instruction,
+            aspect_ratio=aspect_ratio,
+            generation_mode=generation_mode,
+        )
+        b64 = result.get("image_b64", "")
+        if not b64:
+            raise VoiceAPIError("Empty image result from edit API")
+        return b64
+
+    start = time.monotonic()
+    logger.info(
+        "edit_image: instruction=%r ratio=%s num=%d user=%d",
+        edit_instruction[:80], aspect_ratio, num_images, user_id,
     )
-    task_id = submit_resp["task_id"]
-    logger.info("Edit task %s submitted", task_id)
 
-    await client.poll_task(task_id, on_progress=on_progress)
+    if num_images == 1:
+        images = [await _single_edit()]
+    else:
+        tasks = [asyncio.create_task(_single_edit()) for _ in range(num_images)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    result = await client.get_result(task_id, image_base64=True, fmt="png")
-    logger.info("Edit task %s completed", task_id)
-    return result
+        images: List[str] = []
+        errors: List[Exception] = []
+        for r in results:
+            if isinstance(r, Exception):
+                errors.append(r)
+            else:
+                images.append(r)
+
+        if not images:
+            raise errors[0] if errors else VoiceAPIError("No images edited")
+
+        if errors:
+            logger.warning(
+                "edit_image: %d/%d variants failed: %s",
+                len(errors), num_images, errors[0],
+            )
+
+    elapsed = time.monotonic() - start
+    logger.info("edit_image: %d images in %.1fs", len(images), elapsed)
+    return images

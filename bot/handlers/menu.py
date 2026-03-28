@@ -34,8 +34,8 @@ from app.services.voiceapi import (
     VoiceAPIError,
     VoiceAPIRateLimitError,
     VoiceAPITaskFailed,
-    edit_image_v2,
-    generate_image_v2,
+    edit_image,
+    generate_image,
 )
 from bot.keyboards.main_menu import (
     build_edit_selection_keyboard,
@@ -124,41 +124,8 @@ async def safe_delete_message(message: Message | None) -> None:
         pass
 
 
-def make_progress_callback(status_message: Message, lang: str):
-    """Create a progress callback that maps API stages to user-friendly labels."""
-    last_text_holder = [""]  # mutable container for nonlocal
-
-    # Map technical progress_stage values to user-friendly status keys
-    _STAGE_TO_STATUS = {
-        "queued": "queued",
-        "in_progress": "in_progress",
-        "generating": "generating",
-        "completed": "completed",
-    }
-
-    async def on_progress(status: str, progress: float, data: dict) -> None:
-        pct = max(0, min(100, int(progress)))
-        bar_len = 10
-        filled = int(bar_len * pct / 100)
-        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
-
-        raw_stage = data.get("progress_stage") or status
-        # Resolve: known key → localized label; unknown technical string → fall back to status
-        status_key = _STAGE_TO_STATUS.get(raw_stage)
-        if status_key is None:
-            # Unknown stage like "Starting inference pipeline" — use the task status instead
-            status_key = _STAGE_TO_STATUS.get(status, "in_progress")
-        stage_label = get_message(f"generate.progress.{status_key}", lang)
-
-        new_text = f"{stage_label}\n{bar} {pct}%"
-        if new_text != last_text_holder[0]:
-            last_text_holder[0] = new_text
-            try:
-                await status_message.edit_text(new_text)
-            except TelegramBadRequest:
-                pass
-
-    return on_progress
+# v1 API is synchronous — no progress stages available.
+# We show a static "generating…" message instead.
 
 
 async def respond_to_action(message: Message, action: str, lang: str, state: FSMContext | None = None, user_id: int = 0) -> None:
@@ -424,26 +391,14 @@ async def _run_single_generation(
         status_message = await message.answer(
             get_message("generate.processing.submitted", lang)
         )
-        on_progress = make_progress_callback(status_message, lang)
 
-        result = await generate_image_v2(
+        generated_b64 = await generate_image(
             prompt=full_prompt,
             aspect_ratio=ratio,
             generation_mode=settings.voice_api_generation_mode,
             num_images=count,
-            on_progress=on_progress,
             user_id=user_id,
         )
-
-        generated_b64: List[str] = []
-        images_list = result.get("images", [])
-        if images_list:
-            for img_info in images_list:
-                b64 = img_info.get("image_base64", "")
-                if b64:
-                    generated_b64.append(b64)
-        if not generated_b64 and result.get("image_base64"):
-            generated_b64.append(result["image_base64"])
 
         if not generated_b64:
             raise VoiceAPIError("No images in API response")
@@ -618,33 +573,17 @@ async def handle_variant_choice(callback: CallbackQuery, state: FSMContext) -> N
 
     status_message: Message | None = None
     try:
-        # Status message with live progress bar
         status_message = await message.answer(
             get_message("generate.processing.submitted", lang)
         )
 
-        on_progress = make_progress_callback(status_message, lang)
-
-        result = await generate_image_v2(
+        generated_b64 = await generate_image(
             prompt=full_prompt,
             aspect_ratio=ratio,
             generation_mode=settings.voice_api_generation_mode,
             num_images=count,
-            on_progress=on_progress,
             user_id=callback.from_user.id,
         )
-
-        # Extract images from v2 result
-        generated_b64: List[str] = []
-        # v2 returns images list for multi-image, or single image_base64
-        images_list = result.get("images", [])
-        if images_list:
-            for img_info in images_list:
-                b64 = img_info.get("image_base64", "")
-                if b64:
-                    generated_b64.append(b64)
-        if not generated_b64 and result.get("image_base64"):
-            generated_b64.append(result["image_base64"])
 
         if not generated_b64:
             raise VoiceAPIError("No images in API response")
@@ -710,7 +649,7 @@ async def handle_result_regenerate(callback: CallbackQuery, state: FSMContext) -
 
     source_image = last.get("source_image")
     if source_image:
-        # This was an edit result — regenerate via edit_image_v2
+        # This was an edit result — regenerate via edit_image
         await state.update_data(
             language=lang,
             edit_prompt=last["prompt"],
@@ -719,7 +658,7 @@ async def handle_result_regenerate(callback: CallbackQuery, state: FSMContext) -
         )
         await state.set_state(ImageCreationStates.waiting_edit_variants)
     else:
-        # This was a fresh generation — regenerate via generate_image_v2
+        # This was a fresh generation — regenerate via generate_image
         await state.update_data(language=lang, prompt=last["prompt"], ratio=last["ratio"])
         await state.set_state(ImageCreationStates.waiting_variants)
 
@@ -844,36 +783,20 @@ async def handle_edit_variant_choice(callback: CallbackQuery, state: FSMContext)
             await message.answer(get_message("generate.error", lang))
         return
 
-    source_bytes = base64.b64decode(source_b64)
-
     status_message: Message | None = None
     try:
         status_message = await message.answer(
             get_message("generate.processing.submitted", lang)
         )
 
-        on_progress = make_progress_callback(status_message, lang)
-
-        result = await edit_image_v2(
-            prompt=edit_prompt,
-            image_bytes=source_bytes,
+        generated_b64 = await edit_image(
+            edit_instruction=edit_prompt,
+            reference_image_b64=source_b64,
             aspect_ratio=ratio,
             generation_mode=settings.voice_api_generation_mode,
             num_images=count,
-            on_progress=on_progress,
             user_id=callback.from_user.id,
         )
-
-        # Extract image(s) from result
-        generated_b64: List[str] = []
-        images_list = result.get("images", [])
-        if images_list:
-            for img_info in images_list:
-                b64 = img_info.get("image_base64", "")
-                if b64:
-                    generated_b64.append(b64)
-        if not generated_b64 and result.get("image_base64"):
-            generated_b64.append(result["image_base64"])
 
         if not generated_b64:
             raise VoiceAPIError("No images in edit API response")
