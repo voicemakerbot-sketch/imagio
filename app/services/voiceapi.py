@@ -99,7 +99,13 @@ class VoiceAPIClient:
             "generation_mode": generation_mode,
             "prompt_upsampling": prompt_upsampling,
         }
-        resp = await self._client.post("/v1/image/create", json=payload)
+        url = "/v1/image/create"
+        logger.info("POST %s payload_keys=%s", url, list(payload.keys()))
+        resp = await self._client.post(url, json=payload)
+        logger.info(
+            "POST %s → status=%d content_length=%s",
+            url, resp.status_code, resp.headers.get("content-length", "?"),
+        )
         self._raise_for_status(resp)
         return resp.json()
 
@@ -126,7 +132,13 @@ class VoiceAPIClient:
             "generation_mode": generation_mode,
             "prompt_upsampling": prompt_upsampling,
         }
-        resp = await self._client.post("/v1/image/edit", json=payload)
+        url = "/v1/image/edit"
+        logger.info("POST %s payload_keys=%s", url, list(payload.keys()))
+        resp = await self._client.post(url, json=payload)
+        logger.info(
+            "POST %s → status=%d content_length=%s",
+            url, resp.status_code, resp.headers.get("content-length", "?"),
+        )
         self._raise_for_status(resp)
         return resp.json()
 
@@ -154,6 +166,8 @@ class VoiceAPIClient:
         msg = f"{desc}: {detail}" if detail else desc
         if error_code:
             msg = f"[{error_code}] {msg}"
+
+        logger.error("API error: status=%d error_code=%s detail=%s", status, error_code, detail)
 
         if status == 429:
             raise VoiceAPIRateLimitError(msg)
@@ -222,8 +236,8 @@ class VoiceAPIPool:
         self._user_semaphores: Dict[int, asyncio.Semaphore] = {}
 
         logger.info(
-            "VoiceAPIPool initialized: %d keys, global_limit=%d, per_key=%d, per_user=%d",
-            len(self._keys), MAX_GLOBAL_CONCURRENT, MAX_CONCURRENT_PER_KEY, MAX_CONCURRENT_PER_USER,
+            "VoiceAPIPool initialized: base_url=%s keys=%d global_limit=%d per_key=%d per_user=%d",
+            base_url, len(self._keys), MAX_GLOBAL_CONCURRENT, MAX_CONCURRENT_PER_KEY, MAX_CONCURRENT_PER_USER,
         )
 
     def _get_user_semaphore(self, user_id: int) -> asyncio.Semaphore:
@@ -280,6 +294,12 @@ class VoiceAPIPool:
                     logger.warning("Key …%s hit 429, rotating", key[-8:])
                     last_exc = exc
                     continue
+                except Exception as exc:
+                    logger.error(
+                        "%s failed with key …%s: %s: %s",
+                        method_name, key[-8:], type(exc).__name__, exc,
+                    )
+                    raise
         raise last_exc or VoiceAPIRateLimitError("All API keys exhausted (429)")
 
     async def close(self) -> None:
