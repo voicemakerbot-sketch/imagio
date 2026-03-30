@@ -40,9 +40,32 @@ STRICT RULES (non-negotiable):
 1. Break the story into exactly {target_scenes} scenes, evenly distributed \
 across the narrative (beginning, middle, end).
 2. RESPOND ONLY with valid JSON object. No markdown, no explanation.
-3. Format: {{"scenes": [{{"scene": 1, "prompt": "..."}}, ...]}}
+3. Format:
+{{
+  "characters": [
+    {{"name": "...", "visual": "detailed physical appearance: age, gender, \
+hair color/style, eye color, skin tone, build, distinguishing features, \
+typical clothing"}}
+  ],
+  "scenes": [
+    {{"scene": 1, "prompt": "..."}}
+  ]
+}}
 
-USER STYLE INSTRUCTIONS:
+CHARACTER CONSISTENCY (critical):
+- First, identify ALL named characters from the story and write a detailed \
+visual identity for each in the "characters" array.
+- In EVERY scene prompt, when a character appears, include their FULL visual \
+description from the characters array — do NOT use just a name.
+- A character must look IDENTICAL across all scenes: same hair, same face, \
+same build, same clothing (unless the story explicitly changes it).
+- Example: instead of "John walks in the park", write \
+"a tall man in his 30s with short brown hair, green eyes, wearing a dark \
+blue coat and jeans, walks through a sunlit park"
+
+{style_instructions}
+
+USER INSTRUCTIONS:
 {user_style_prompt}
 """
 
@@ -50,13 +73,18 @@ DEFAULT_STORY_PROMPT = """\
 Each scene must capture a KEY VISUAL MOMENT — something that would make \
 a compelling illustration.
 Write prompts in English, regardless of the story language.
-Each prompt must be a detailed visual description (100-200 words): \
-describe characters' appearance, clothing, pose, expression, environment, \
-lighting, mood, camera angle, composition.
-Keep visual consistency — if a character has red hair in scene 1, \
-they must have red hair in ALL scenes.
-DO NOT include text, watermarks, or UI elements in prompts.
-DO NOT reference previous scenes — each prompt must be self-contained.\
+Each prompt must be a self-contained detailed visual description (100-200 words).\
+"""
+
+# Hard-coded style/quality rules always appended — cannot be overridden by user
+_STYLE_INSTRUCTIONS = """\
+PROMPT QUALITY RULES:
+- Each prompt must include: characters' full appearance (from characters array), \
+pose, expression, environment, lighting, mood, camera angle, composition.
+- Each prompt is SELF-CONTAINED — do not say "same as before" or reference \
+other scenes. Repeat the full visual description every time.
+- DO NOT include text, speech bubbles, watermarks, or UI elements.
+- DO NOT mention character names — only visual descriptions.\
 """
 
 
@@ -110,9 +138,14 @@ async def parse_story(
 
     user_style = (story_prompt or "").strip() or DEFAULT_STORY_PROMPT
 
+    style_block = _STYLE_INSTRUCTIONS
+    if style_suffix:
+        style_block += f"\n\nVISUAL STYLE (apply to ALL scenes): {style_suffix}"
+
     system_msg = _SYSTEM_PROMPT.format(
         target_scenes=target_scenes,
         user_style_prompt=user_style,
+        style_instructions=style_block,
     )
 
     user_msg = (
@@ -167,11 +200,6 @@ async def parse_story(
 
     if not scenes:
         raise ValueError("GPT returned empty scenes list")
-
-    # Append style_suffix from preset to each prompt
-    if style_suffix:
-        for scene in scenes:
-            scene["prompt"] = f"{style_suffix}, {scene['prompt']}"
 
     logger.info("story_parser: parsed %d scenes", len(scenes))
     return scenes

@@ -162,7 +162,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "story.scene_caption": "🖼 Сцена {scene}/{total} • Варіант {variant}/{variants}",
         "preset.btn_story_prompt": "Налаштувати story prompt",
         "preset.btn_clear_story_prompt": "Прибрати story prompt",
-        "preset.ask_story_prompt": "📖 <b>Напиши інструкції для GPT</b>\n\nЦей текст визначає, як GPT розбиватиме історію на сцени та який стиль промптів писатиме.\n\n💡 <i>Наприклад: «кінематографічний стиль, темна атмосфера, деталізовані пейзажі»</i>\n\nНапиши інструкції нижче 👇",
+        "preset.ask_story_prompt": "📖 <b>Інструкції для розбивки історії</b>\n\nЦей текст вказує GPT, які саме моменти історії обирати для сцен та як описувати їх у промптах.\n\nℹ️ <b>Стиль зображень</b> (кіберпанк, акварель тощо) налаштовується окремо через кнопку «🎨 Налаштувати стиль».\n\n💡 <i>Приклади:\n• «кожна сцена має показувати емоцію героя, не пейзаж»\n• «обирай драматичні моменти, не побутові»\n• «фокус на крупних планах облич»</i>\n\nНапиши інструкції нижче 👇",
         "preset.label_story_prompt": "Story prompt",
     },
     "en": {
@@ -320,7 +320,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "story.scene_caption": "🖼 Scene {scene}/{total} • Variant {variant}/{variants}",
         "preset.btn_story_prompt": "Set story prompt",
         "preset.btn_clear_story_prompt": "Clear story prompt",
-        "preset.ask_story_prompt": "📖 <b>Write GPT instructions</b>\n\nThis text defines how GPT breaks your story into scenes and what style to use for prompts.\n\n💡 <i>E.g.: \"cinematic style, dark atmosphere, detailed landscapes\"</i>\n\nType instructions below 👇",
+        "preset.ask_story_prompt": "📖 <b>Story splitting instructions</b>\n\nThis text tells GPT which moments to pick for scenes and how to describe them in prompts.\n\nℹ️ <b>Visual style</b> (cyberpunk, watercolor, etc.) is set separately via the \"🎨 Set style\" button.\n\n💡 <i>Examples:\n• \"each scene should show character emotion, not landscape\"\n• \"pick dramatic moments, not everyday ones\"\n• \"focus on close-up face shots\"</i>\n\nType instructions below 👇",
         "preset.label_story_prompt": "Story prompt",
     },
     "es": {
@@ -478,7 +478,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "story.scene_caption": "🖼 Escena {scene}/{total} • Variante {variant}/{variants}",
         "preset.btn_story_prompt": "Configurar story prompt",
         "preset.btn_clear_story_prompt": "Quitar story prompt",
-        "preset.ask_story_prompt": "📖 <b>Escribe instrucciones para GPT</b>\n\nEste texto define cómo GPT divide tu historia en escenas y qué estilo usar para los prompts.\n\n💡 <i>Ej.: \"estilo cinematográfico, atmósfera oscura, paisajes detallados\"</i>\n\nEscribe las instrucciones abajo 👇",
+        "preset.ask_story_prompt": "📖 <b>Instrucciones para dividir la historia</b>\n\nEste texto indica a GPT qué momentos elegir para las escenas y cómo describirlos en los prompts.\n\nℹ️ <b>El estilo visual</b> (cyberpunk, acuarela, etc.) se configura aparte con el botón \"🎨 Configurar estilo\".\n\n💡 <i>Ejemplos:\n• \"cada escena debe mostrar la emoción del personaje, no el paisaje\"\n• \"elige momentos dramáticos, no cotidianos\"\n• \"enfoque en primeros planos de rostros\"</i>\n\nEscribe las instrucciones abajo 👇",
         "preset.label_story_prompt": "Story prompt",
     },
 }

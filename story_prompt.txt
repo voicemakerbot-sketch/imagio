@@ -1,0 +1,6 @@
+Each scene must capture a KEY VISUAL MOMENT — something that would make a compelling illustration.
+Write prompts in English, regardless of the story language.
+Each prompt must be a detailed visual description (100-200 words): describe characters' appearance, clothing, pose, expression, environment, lighting, mood, camera angle, composition.
+Keep visual consistency — if a character has red hair in scene 1, they must have red hair in ALL scenes.
+DO NOT include text, watermarks, or UI elements in prompts.
+DO NOT reference previous scenes — each prompt must be self-contained.
