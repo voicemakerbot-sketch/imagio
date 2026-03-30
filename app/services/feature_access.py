@@ -15,6 +15,7 @@ class Feature(StrEnum):
     EDIT = "edit"
     QUEUE = "queue"
     PRESETS = "presets"
+    STORY = "story"
 
 
 # Valid subscription tiers
@@ -27,7 +28,7 @@ FREE_DAILY_LIMIT = 10
 TIER_FEATURES: Dict[str, Set[Feature]] = {
     "free": {Feature.GENERATE},
     "premium": {Feature.GENERATE, Feature.EDIT},
-    "pro": {Feature.GENERATE, Feature.EDIT, Feature.QUEUE, Feature.PRESETS},
+    "pro": {Feature.GENERATE, Feature.EDIT, Feature.QUEUE, Feature.PRESETS, Feature.STORY},
     "frozen": set(),  # no access at all
 }
 
@@ -45,6 +46,7 @@ FEATURE_REQUIRED_TIER: Dict[Feature, str] = {
     Feature.EDIT: "premium",
     Feature.QUEUE: "pro",
     Feature.PRESETS: "pro",
+    Feature.STORY: "pro",
 }
 
 

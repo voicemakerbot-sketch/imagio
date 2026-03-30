@@ -108,6 +108,7 @@ class Preset(Base):
     aspect_ratio: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     num_variants: Mapped[Optional[int]] = mapped_column(nullable=True)
     style_suffix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    story_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

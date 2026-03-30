@@ -11,6 +11,7 @@ def build_main_menu(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=get_message("menu.generate", language), callback_data="menu:generate")],
+            [InlineKeyboardButton(text=get_message("menu.story", language), callback_data="menu:story")],
             [InlineKeyboardButton(text=get_message("menu.queue", language), callback_data="menu:queue")],
             [InlineKeyboardButton(text=get_message("menu.presets", language), callback_data="menu:presets")],
             [InlineKeyboardButton(text=get_message("menu.subscription", language), callback_data="menu:subscription")],
@@ -175,8 +176,16 @@ def build_preset_card_keyboard(preset_id: int, is_active: bool, language: str) -
             callback_data=f"presetclear_style:{preset_id}",
         )],
         [InlineKeyboardButton(
-            text=f"✏️ {get_message('preset.btn_rename', language)}",
+            text=f"\u2728\ufe0f {get_message('preset.btn_rename', language)}",
             callback_data=f"presetedit_name:{preset_id}",
+        )],
+        [InlineKeyboardButton(
+            text=f"\ud83d\udcd6 {get_message('preset.btn_story_prompt', language)}",
+            callback_data=f"presetedit_story:{preset_id}",
+        )],
+        [InlineKeyboardButton(
+            text=f"\ud83e\uddf9 {get_message('preset.btn_clear_story_prompt', language)}",
+            callback_data=f"presetclear_story:{preset_id}",
         )],
     ]
     # Activate / deactivate toggle
@@ -234,7 +243,7 @@ def build_preset_variants_keyboard(preset_id: int, language: str) -> InlineKeybo
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🧹 {get_message('preset.btn_clear', language)}",
+                    text=f"\ud83e\uddf9 {get_message('preset.btn_clear', language)}",
                     callback_data=f"presetvar:clear:{preset_id}",
                 ),
                 InlineKeyboardButton(
@@ -242,5 +251,47 @@ def build_preset_variants_keyboard(preset_id: int, language: str) -> InlineKeybo
                     callback_data=f"presetselect:{preset_id}",
                 ),
             ],
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Story-to-Images keyboards
+# ---------------------------------------------------------------------------
+
+
+def build_story_preset_picker(presets: list, language: str) -> InlineKeyboardMarkup:
+    """Picker shown at story entry: existing presets + no-preset option."""
+    rows = []
+    for p in presets:
+        prefix = "\ud83d\udfe2 " if p.is_active else ""
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{prefix}{p.name}",
+                callback_data=f"story:pick_preset:{p.id}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text=get_message("story.no_preset", language),
+            callback_data="story:no_preset",
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text=get_message("story.cancel", language),
+            callback_data="story:cancel",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_story_cancel_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=get_message("story.cancel", language),
+                callback_data="story:cancel",
+            )]
         ]
     )

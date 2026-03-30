@@ -48,6 +48,7 @@ class PresetStates(StatesGroup):
     waiting_name = State()
     editing_name = State()
     editing_style = State()
+    editing_story_prompt = State()
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +120,10 @@ async def _show_preset_card(message: Message, lang: str, state: FSMContext, pres
     if len(style_display) > 60:
         style_display = style_display[:60] + "…"
     lines.append(f"🎨 {get_message('preset.label_style', lang)}: <i>{style_display}</i>")
+    story_display = preset.story_prompt or "—"
+    if len(story_display) > 60:
+        story_display = story_display[:60] + "…"
+    lines.append(f"📖 {get_message('preset.label_story_prompt', lang)}: <i>{story_display}</i>")
     lines.append("")
     lines.append(get_message("preset.style_explanation", lang))
 
@@ -443,6 +448,80 @@ async def handle_clear_style(callback: CallbackQuery, state: FSMContext) -> None
 
     async with AsyncSessionFactory() as session:
         await update_preset(session, preset_id, user_id, style_suffix=None)
+        await session.commit()
+
+    await callback.answer()
+    await _safe_delete(callback.message)
+    await _cleanup(state, callback.bot)
+    await state.clear()
+
+    if callback.message:
+        await _show_preset_card(callback.message, lang, state, preset_id, user_id)
+
+
+# ---------------------------------------------------------------------------
+# Edit story prompt
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("presetedit_story:"))
+async def handle_edit_story_prompt_start(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = _get_user_language(callback)
+    try:
+        preset_id = int(callback.data.split(":", maxsplit=1)[1])
+    except ValueError:
+        await callback.answer("Invalid", show_alert=True)
+        return
+
+    await callback.answer()
+    await _safe_delete(callback.message)
+    await _cleanup(state, callback.bot)
+
+    await state.update_data(language=lang, editing_preset_id=preset_id)
+    await state.set_state(PresetStates.editing_story_prompt)
+    if callback.message:
+        sent = await callback.message.answer(get_message("preset.ask_story_prompt", lang))
+        await _remember(state, sent)
+
+
+@router.message(PresetStates.editing_story_prompt)
+async def handle_story_prompt_input(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = data.get("language") or _get_user_language(message)
+    preset_id = data.get("editing_preset_id")
+    user_id = message.from_user.id
+
+    if _is_bot_command(message.text):
+        await state.clear()
+        return
+
+    if not message.text or not preset_id:
+        sent = await message.answer(get_message("preset.ask_story_prompt", lang))
+        await _remember(state, sent)
+        return
+
+    await _cleanup(state, message.bot)
+    story_prompt = message.text.strip()
+
+    async with AsyncSessionFactory() as session:
+        await update_preset(session, preset_id, user_id, story_prompt=story_prompt)
+        await session.commit()
+
+    await state.clear()
+    await _show_preset_card(message, lang, state, preset_id, user_id)
+
+
+@router.callback_query(F.data.startswith("presetclear_story:"))
+async def handle_clear_story_prompt(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = _get_user_language(callback)
+    user_id = callback.from_user.id
+    try:
+        preset_id = int(callback.data.split(":", maxsplit=1)[1])
+    except ValueError:
+        await callback.answer("Invalid", show_alert=True)
+        return
+
+    async with AsyncSessionFactory() as session:
+        await update_preset(session, preset_id, user_id, story_prompt=None)
         await session.commit()
 
     await callback.answer()

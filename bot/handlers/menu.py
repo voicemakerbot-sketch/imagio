@@ -72,7 +72,7 @@ router = Router(name="menu")
 
 USER_LANG_PREFS: Dict[int, str] = {}
 LAST_RESULTS: Dict[int, Dict[str, Any]] = {}
-MENU_ACTIONS = tuple(command for command, _ in BOT_COMMANDS) + ("queue", "presets")
+MENU_ACTIONS = tuple(command for command, _ in BOT_COMMANDS) + ("queue", "presets", "story")
 SERVICE_MESSAGES_KEY = "service_messages"
 
 

@@ -13,6 +13,7 @@ from app.core.config import settings
 from bot.handlers import menu as menu_handlers
 from bot.handlers import presets as preset_handlers
 from bot.handlers import queue as queue_handlers
+from bot.handlers import story as story_handlers
 from bot.handlers import subscription as subscription_handlers
 from bot.middleware.user_tracking import UserTrackingMiddleware
 
@@ -41,6 +42,7 @@ def build_bot() -> tuple[Bot, Dispatcher]:
 
     dispatcher.include_router(subscription_handlers.router)
     dispatcher.include_router(preset_handlers.router)
+    dispatcher.include_router(story_handlers.router)
     dispatcher.include_router(queue_handlers.router)
     dispatcher.include_router(menu_handlers.router)
     return bot, dispatcher

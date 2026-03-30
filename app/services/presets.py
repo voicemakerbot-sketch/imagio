@@ -99,6 +99,7 @@ async def create_preset(
     aspect_ratio: Optional[str] = None,
     num_variants: Optional[int] = None,
     style_suffix: Optional[str] = None,
+    story_prompt: Optional[str] = None,
 ) -> Preset:
     """Create a new preset and activate it (deactivating others)."""
     uid = await _uid(session, telegram_id)
@@ -109,6 +110,7 @@ async def create_preset(
         aspect_ratio=aspect_ratio,
         num_variants=num_variants,
         style_suffix=style_suffix,
+        story_prompt=story_prompt,
         is_active=True,
     )
     session.add(preset)
@@ -170,4 +172,9 @@ def format_preset_details(preset: Preset) -> str:
         if len(preset.style_suffix) > 30:
             suffix_preview += "…"
         parts.append(f'стиль: "{suffix_preview}"')
+    if preset.story_prompt:
+        sp_preview = preset.story_prompt[:30]
+        if len(preset.story_prompt) > 30:
+            sp_preview += "…"
+        parts.append(f'📖 story prompt')
     return ", ".join(parts) if parts else "без параметрів"

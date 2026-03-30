@@ -195,12 +195,57 @@ class VoiceAPIClient:
 
 # Per-key concurrency: how many simultaneous requests one API key handles
 MAX_CONCURRENT_PER_KEY = 3
-# Per-user concurrency: max parallel generations per Telegram user
-MAX_CONCURRENT_PER_USER = 2
+# Per-user concurrency bounds (dynamic fair-share)
+MIN_CONCURRENT_PER_USER = 2   # guaranteed minimum even under heavy load
+MAX_CONCURRENT_PER_USER = 8   # ceiling even when bot is idle
 # Global concurrency: total simultaneous requests across all keys / users.
 # This protects the external API from overload when 50+ users are active.
 # With 10 keys × 3 per key = 30 max, we cap at 20 for safety margin.
 MAX_GLOBAL_CONCURRENT = 20
+
+
+class _FairShareLimiter:
+    """Dynamic per-user concurrency that adapts to current load.
+
+    When only 1 user is active → they get up to MAX_CONCURRENT_PER_USER slots.
+    When many users are active → each gets at least MIN_CONCURRENT_PER_USER.
+    Fair-share formula: clamp(GLOBAL / active_users, MIN, MAX).
+    """
+
+    def __init__(self) -> None:
+        self._active: Dict[int, int] = {}  # user_id → current in-flight count
+        self._lock = asyncio.Lock()
+
+    @property
+    def active_user_count(self) -> int:
+        return len(self._active)
+
+    def _user_limit(self) -> int:
+        """Calculate per-user slot limit based on current active users."""
+        n = max(1, len(self._active))
+        fair = MAX_GLOBAL_CONCURRENT // n
+        return max(MIN_CONCURRENT_PER_USER, min(MAX_CONCURRENT_PER_USER, fair))
+
+    async def acquire(self, user_id: int) -> None:
+        """Wait until user can start a new request (fair-share)."""
+        while True:
+            async with self._lock:
+                current = self._active.get(user_id, 0)
+                limit = self._user_limit()
+                if current < limit:
+                    self._active[user_id] = current + 1
+                    return
+            # Slot not available — yield and retry
+            await asyncio.sleep(0.1)
+
+    async def release(self, user_id: int) -> None:
+        """Release a slot after request completes."""
+        async with self._lock:
+            current = self._active.get(user_id, 0)
+            if current <= 1:
+                self._active.pop(user_id, None)
+            else:
+                self._active[user_id] = current - 1
 
 
 class VoiceAPIPool:
@@ -209,7 +254,10 @@ class VoiceAPIPool:
     Concurrency is controlled at three levels:
     1. **Global semaphore** — caps total parallel requests to the external API
     2. **Per-key semaphore** — prevents a single key from being overloaded
-    3. **Per-user semaphore** — limits individual user's parallel requests
+    3. **Fair-share limiter** — dynamic per-user limits that adapt to load:
+       - 1 user active → up to 8 parallel slots (fast story generation)
+       - 5 users active → ~4 slots each
+       - 10+ users → 2 slots each (guaranteed minimum)
 
     On 429 the pool marks the key as temporarily exhausted and tries the next.
     """
@@ -233,17 +281,14 @@ class VoiceAPIPool:
         self._key_semaphores: Dict[str, asyncio.Semaphore] = {
             key: asyncio.Semaphore(MAX_CONCURRENT_PER_KEY) for key in self._keys
         }
-        self._user_semaphores: Dict[int, asyncio.Semaphore] = {}
+        self._fair_share = _FairShareLimiter()
 
         logger.info(
-            "VoiceAPIPool initialized: base_url=%s keys=%d global_limit=%d per_key=%d per_user=%d",
-            base_url, len(self._keys), MAX_GLOBAL_CONCURRENT, MAX_CONCURRENT_PER_KEY, MAX_CONCURRENT_PER_USER,
+            "VoiceAPIPool initialized: base_url=%s keys=%d global_limit=%d per_key=%d "
+            "per_user=%d-%d (dynamic fair-share)",
+            base_url, len(self._keys), MAX_GLOBAL_CONCURRENT, MAX_CONCURRENT_PER_KEY,
+            MIN_CONCURRENT_PER_USER, MAX_CONCURRENT_PER_USER,
         )
-
-    def _get_user_semaphore(self, user_id: int) -> asyncio.Semaphore:
-        if user_id not in self._user_semaphores:
-            self._user_semaphores[user_id] = asyncio.Semaphore(MAX_CONCURRENT_PER_USER)
-        return self._user_semaphores[user_id]
 
     def _get_client(self, key: str) -> VoiceAPIClient:
         if key not in self._clients:
@@ -262,20 +307,24 @@ class VoiceAPIPool:
     async def create_image(
         self, *, user_id: int = 0, **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Try /v1/image/create across keys with 3-level concurrency control."""
-        user_sem = self._get_user_semaphore(user_id)
-        async with user_sem:
+        """Try /v1/image/create with fair-share + global + per-key concurrency."""
+        await self._fair_share.acquire(user_id)
+        try:
             async with self._global_semaphore:
                 return await self._try_across_keys("create_image", **kwargs)
+        finally:
+            await self._fair_share.release(user_id)
 
     async def edit_image(
         self, *, user_id: int = 0, **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Try /v1/image/edit across keys with 3-level concurrency control."""
-        user_sem = self._get_user_semaphore(user_id)
-        async with user_sem:
+        """Try /v1/image/edit with fair-share + global + per-key concurrency."""
+        await self._fair_share.acquire(user_id)
+        try:
             async with self._global_semaphore:
                 return await self._try_across_keys("edit_image", **kwargs)
+        finally:
+            await self._fair_share.release(user_id)
 
     async def _try_across_keys(self, method_name: str, **kwargs: Any) -> Dict[str, Any]:
         """Rotate through API keys, skip 429'd ones."""

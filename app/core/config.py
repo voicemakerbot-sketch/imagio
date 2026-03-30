@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     bot_default_language: str = "uk"
 
+    # --- OpenAI (story-to-images) ---
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("admin_ids", mode="before")
