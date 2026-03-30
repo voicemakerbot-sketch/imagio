@@ -48,6 +48,13 @@ async def lifespan(_: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables ensured")
 
+        # Auto-migrate: add new columns that create_all won't add to existing tables
+        result = await conn.execute(text("PRAGMA table_info(presets)"))
+        existing_columns = {row[1] for row in result.fetchall()}
+        if "story_prompt" not in existing_columns:
+            await conn.execute(text("ALTER TABLE presets ADD COLUMN story_prompt TEXT"))
+            logger.info("Migrated: added story_prompt column to presets")
+
     # Seed plans in a separate transaction
     async with engine.begin() as conn:
         for plan in _DEFAULT_PLANS:
